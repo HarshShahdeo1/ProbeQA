@@ -1,0 +1,104 @@
+services:
+  # ── 1. Backend Service (FastAPI + Playwright QA Agent) ───────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: probeqa-backend
+    restart: unless-stopped
+    ports:
+      # Published on localhost:8001 by default to avoid collision with running local backend on 8000
+      - "127.0.0.1:${BACKEND_PORT:-8001}:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - GROQ_MODEL=${GROQ_MODEL:-qwen/qwen3.8-27b}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - DATABASE_URL=sqlite:////app/data/probeqa.db
+    volumes:
+      # Persistent volume for SQLite database across container recreation
+      - probeqa_data:/app/data
+      # Mount evidence directory to preserve failure screenshots on host
+      - ./backend/evidence:/app/evidence
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; resp = httpx.get('http://127.0.0.1:8000/health', timeout=3.0); exit(0 if resp.status_code == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - probeqa-network
+
+  # ── 2. Frontend Service (React + Vite served via Nginx) ──────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Empty string leverages Nginx reverse proxy (/api -> backend:8000/api)
+        VITE_API_BASE_URL: ""
+    container_name: probeqa-frontend
+    restart: unless-stopped
+    ports:
+      # Published on localhost:5174 by default to avoid collision with running local Vite on 5173
+      - "127.0.0.1:${FRONTEND_PORT:-5174}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - probeqa-network
+
+  # ── 3. Prometheus Observability Service ──────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: probeqa-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    ports:
+      # Published on localhost:9091 by default to avoid collision with running local Prometheus on 9090
+      - "127.0.0.1:${PROMETHEUS_PORT:-9091}:9090"
+    volumes:
+      - ./monitoring/prometheus-docker.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - probeqa-network
+
+  # ── 4. Grafana Visual Dashboard Service ─────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: probeqa-grafana
+    restart: unless-stopped
+    ports:
+      # Published on localhost:3002 by default to avoid collision with running local Grafana on 3000
+      - "127.0.0.1:${GRAFANA_PORT:-3002}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - probeqa-network
+
+volumes:
+  probeqa_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  probeqa-network:
+    driver: bridge

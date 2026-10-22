@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Scrape Prometheus itself
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Scrape ProbeQA FastAPI Backend
+  - job_name: "probeqa"
+    metrics_path: "/metrics"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["127.0.0.1:8000"]
+        labels:
+          app: "probeqa"
+          env: "development"

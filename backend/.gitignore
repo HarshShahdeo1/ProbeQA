@@ -1,0 +1,25 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables — NEVER commit this file
+.env
+
+# Screenshots generated at runtime
+evidence/
+
+# SQLite databases
+probeqa.db
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/

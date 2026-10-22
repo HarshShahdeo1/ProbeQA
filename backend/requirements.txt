@@ -1,0 +1,35 @@
+# ProbeQA backend dependencies
+# Install with:  pip install -r requirements.txt
+# Then install Playwright browsers:  playwright install chromium
+
+# ── Web framework ─────────────────────────────────────────────────────────────
+# FastAPI: builds the HTTP API.  "standard" extras pull in email-validator
+# and the full production feature set.
+fastapi[standard]==0.115.12
+
+# ── ASGI server ───────────────────────────────────────────────────────────────
+# Uvicorn runs the FastAPI app.  "standard" extras include the fast C-based
+# event loop (uvloop) and HTTP parser (httptools) on Linux/macOS.
+uvicorn[standard]==0.34.3
+
+# ── Browser automation ────────────────────────────────────────────────────────
+# Playwright for Python.  After pip install you ALSO need:
+#   playwright install chromium
+# That downloads the actual Chromium binary (~170 MB).
+playwright==1.51.0
+
+# ── Environment variable loading ──────────────────────────────────────────────
+# Reads a .env file and injects values into os.environ.
+# Keeps secrets out of source code.
+python-dotenv==1.1.0
+
+# ── HTTP client for LLM API calls ────────────────────────────────────────────
+httpx>=0.27.0
+
+# ── Database persistence ──────────────────────────────────────────────────────
+# SQLAlchemy ORM for SQLite / PostgreSQL
+sqlalchemy>=2.0.0
+
+# ── Telemetry & Observability ─────────────────────────────────────────────────
+# Official Prometheus client for metrics exposition
+prometheus-client>=0.20.0
