@@ -12,12 +12,12 @@ Testing web applications often involves repetitive manual verification, fragile 
 - **FastAPI Asynchronous Backend**: High-performance Python backend exposing structured REST endpoints for planning, step-by-step execution, persistent run logs, and Prometheus metrics.
 - **Dual LLM Provider Architecture**: Native support for **Groq** (via OpenAI-compatible API, default `qwen/qwen3.8-27b`) and **Google Gemini** (`gemini-2.5-flash`), with transparent provider labeling and an automated rule-based deterministic fallback when external APIs are unavailable.
 - **Human-in-the-Loop Test Planning**: The model generates a structured, multi-step test plan that users can inspect, modify, and explicitly approve before browser execution begins.
-- **Bounded Observe–Act–Evaluate Agent Loop**: Operates in an iterative feedback cycle: captures real-time page state, sends observations to the model, selects an approved action, validates with strict Pydantic schemas, and stops deterministically upon goal fulfillment (bounded by a maximum iteration cap).
+- **Bounded Observe–Act–Evaluate Agent Loop**: Operates in an iterative feedback cycle: captures real-time page state, sends observations to the model, selects an approved action, validates with strict Pydantic schemas, and stops deterministically upon goal fulfillment (bounded by `MAX_AGENT_ITERATIONS = 8`).
 - **Playwright Headless Automation**: Drives Chromium via Playwright, executing low-level interactions (navigation, keystrokes, form input, element clicks) and capturing full-page PNG screenshots.
 - **Strict Element & Origin Safeguards**: Autonomous browser actions are restricted to registered element aliases and the approved target origin (`https://www.saucedemo.com`), mitigating risks of arbitrary web navigation.
-- **Persistent SQLite Run History**: Real test runs are persisted in SQLite using SQLAlchemy, recording run IDs, target URLs, scenario names, provider models, execution duration, assertion verdicts, and screenshot file paths.
-- **Comprehensive Prometheus & Grafana Observability**: Instrument with `prometheus-client` tracking HTTP counters, request duration histograms, agent run durations, iteration distributions, and active gauges, paired with pre-provisioned Grafana dashboards.
-- **Docker Compose Orchestration**: Multi-container stack (Backend, Frontend, Prometheus, Grafana) with health checks, persistent volumes for databases, and host bind mounts for evidence.
+- **Persistent SQLite Run History**: Real test runs are persisted in SQLite using SQLAlchemy (`backend/probeqa.db` locally or named volume `probeqa_data` in Docker), recording run IDs, target URLs, scenario names, provider models, execution duration, assertion verdicts, and screenshot file paths.
+- **Comprehensive Prometheus & Grafana Observability**: Instrumented with `prometheus-client` tracking HTTP counters, request duration histograms, agent run durations, iteration distributions, and active gauges, paired with pre-provisioned Grafana dashboards.
+- **Docker Compose Orchestration**: Multi-container stack (Backend, Frontend, Prometheus, Grafana) with health checks, persistent volumes for databases, host bind mounts for evidence, and secure environment-variable password configuration.
 - **Deterministic GitHub Actions CI**: Automated CI pipeline running unit tests, telemetry checks, deterministic mock agent benchmarks, Vite compilation, and Docker builds without requiring private API keys.
 
 > [!NOTE]
@@ -42,7 +42,7 @@ flowchart TD
     subgraph Backend ["FastAPI Core (Port 8001 / 8000)"]
         API["FastAPI REST Endpoints (/api)"]
         Planner["LLM Test Planner (Groq / Gemini)"]
-        AgentLoop["Observe–Act–Evaluate Agent Loop"]
+        AgentLoop["Observe–Act–Evaluate Agent Loop (Max 8 Iterations)"]
         ToolRegistry["Approved Tool Registry & Origin Guard"]
         MetricsMiddleware["Prometheus Metrics Collector"]
     end
@@ -54,7 +54,7 @@ flowchart TD
     end
 
     subgraph Storage ["Persistence Layer"]
-        DB[("SQLite Database (probeqa.db)")]
+        DB[("SQLite Database (probeqa.db / probeqa_data)")]
         EvidenceStore["Screenshot Evidence Storage (/app/evidence)"]
     end
 
@@ -114,11 +114,45 @@ The ProbeQA dashboard provides real-time visibility into test execution, AI deci
 *Above: The ProbeQA interface displaying active test scenarios, execution health metrics, and run history. Full failure screenshots and action traces are displayed directly in the dashboard after each run.*
 
 > [!TIP]
-> To experience the complete interactive dashboard, clone the repository and launch the local environment using the instructions below.
+> To experience the complete interactive dashboard, clone the repository and launch the application locally or via Docker Compose using the instructions below.
 
 ---
 
-## 5. Local Development Setup
+## 5. Quickstart: Reproducing a Supported SauceDemo Test
+
+Recruiters and reviewers can execute and verify a real browser QA run in under two minutes:
+
+### Option A: Using the Web Dashboard
+1. Open the frontend dashboard at `http://localhost:5173` (local dev) or `http://127.0.0.1:5174` (Docker).
+2. Navigate to **New Test Plan** or **Scenarios**.
+3. Select the predefined workflow: **Standard User Login & Inventory Check**.
+4. Click **Run Test**. Playwright will launch Chromium, perform the login steps, verify that 6 products are displayed, and capture full-page screenshot evidence.
+5. Review the execution status (`passed`), duration (~2.5–4.5s), and the captured screenshot directly in the dashboard.
+
+### Option B: Using cURL / REST API
+Execute a direct smoke test against the containerized backend:
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/tests/run \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.saucedemo.com", "scenario": "saucedemo_login"}'
+```
+
+**Expected JSON Response:**
+```json
+{
+  "run_id": "2893efca567f",
+  "status": "passed",
+  "scenario": "saucedemo_login",
+  "screenshot_path": "evidence/run_2893efca567f.png"
+}
+```
+
+The resulting full-page PNG screenshot is immediately viewable in your browser at `http://127.0.0.1:8001/evidence/run_2893efca567f.png` and persisted on disk at `backend/evidence/run_2893efca567f.png`.
+
+---
+
+## 6. Local Development Setup
 
 ### Prerequisites
 - **Python**: Version 3.11 or newer
@@ -151,6 +185,9 @@ GROQ_MODEL=qwen/qwen3.8-27b
 # Or configure Gemini:
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
+
+# SQLite storage path (defaults to backend/probeqa.db if unset):
+DATABASE_URL=sqlite:///backend/probeqa.db
 ```
 
 ### Step 3: Set Up and Run the Python Backend
@@ -193,10 +230,27 @@ Open `http://localhost:5173` in your browser to access the ProbeQA UI.
 
 ---
 
-## 6. Docker Compose Deployment
+## 7. Docker Compose Deployment
 
 ProbeQA provides a production-grade multi-container stack orchestrated via Docker Compose.
 
+### Step 1: Configure Root Environment for Docker Compose
+Before starting Docker Compose, copy `.env.example` to `.env` in the project root and specify a secure Grafana password:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env`:
+```ini
+GF_SECURITY_ADMIN_USER=admin
+GF_SECURITY_ADMIN_PASSWORD=your_secure_password_here
+```
+
+> [!IMPORTANT]
+> `docker-compose.yml` strictly requires `GF_SECURITY_ADMIN_PASSWORD`. It will refuse to start with insecure defaults if this variable is missing from your local `.env`.
+
+### Step 2: Start the Container Stack
 ```bash
 # Start all 4 containers in the background
 docker compose up -d
@@ -204,26 +258,32 @@ docker compose up -d
 
 ### Verified Container Access Endpoints:
 
-| Service | Container Name | Host URL | Description |
+| Service | Container Name | Host Published URL | Description |
 |---|---|---|---|
 | **Frontend Web** | `probeqa-frontend` | `http://127.0.0.1:5174` | React SPA served via Nginx with dynamic reverse proxy |
 | **Backend API** | `probeqa-backend` | `http://127.0.0.1:8001/docs` | FastAPI Swagger documentation & REST endpoints |
 | **Prometheus** | `probeqa-prometheus` | `http://127.0.0.1:9091` | Prometheus web UI & target status (`/targets`) |
-| **Grafana** | `probeqa-grafana` | `http://127.0.0.1:3002` | Metrics visualization dashboard (login: `admin` / `admin`) |
+| **Grafana** | `probeqa-grafana` | `http://127.0.0.1:3002` | Metrics visualization dashboard (login: `admin` / your password) |
 
-### Persistent Storage & Secrets:
-- **SQLite Database**: Persisted in the Docker named volume `probeqa_data:/app/data/probeqa.db`, surviving container restarts and recreation.
-- **Screenshot Evidence**: Mapped via host bind mount `./backend/evidence:/app/evidence`. Any screenshot generated by Playwright inside the Linux container is immediately written to your host's local folder.
-- **Port Conflict Protection**: Default published ports (`5174`, `8001`, `9091`, `3002`) avoid collisions with any existing local host servers running on ports `5173`, `8000`, `9090`, or `3000`.
+### Persistent Storage & Evidence Mounts:
+- **SQLite Database Persistence**:
+  - **Local Development**: Stored directly at `backend/probeqa.db`.
+  - **Docker Containers**: Stored inside the container at `/app/data/probeqa.db` and backed by the named Docker volume `probeqa_data:/app/data`. Database records survive container destruction and restarts.
+- **Screenshot Evidence Storage**:
+  - Saved as PNG files in `backend/evidence/`.
+  - In Docker, mapped via host bind mount `./backend/evidence:/app/evidence`. Screenshots captured by Playwright inside Linux Chromium are instantly accessible on your host machine.
+  - SQLite records store only relative paths (`evidence/run_{run_id}.png`), keeping large binary image blobs out of the database.
+- **Port Conflict Prevention**:
+  Published ports (`5174`, `8001`, `9091`, `3002`) are chosen to prevent bind errors if you already have local dev servers running on ports `5173`, `8000`, `9090`, or `3000`.
 
-To stop the containers without losing database records or screenshot files:
+To stop the containers without deleting database records or screenshot files:
 ```bash
 docker compose down
 ```
 
 ---
 
-## 7. REST API Reference
+## 8. REST API Reference
 
 The FastAPI backend exposes the following structured endpoints:
 
@@ -242,20 +302,20 @@ The FastAPI backend exposes the following structured endpoints:
 
 ---
 
-## 8. Testing & Continuous Integration
+## 9. Testing & Continuous Integration
 
-ProbeQA enforces reliability through automated test suites and a GitHub Actions CI pipeline:
+ProbeQA enforces reliability across four distinct testing layers:
 
 ### Running Tests Locally
 
 ```bash
-# 1. Database CRUD & Schema Migration Tests
+# 1. Database CRUD & Schema Migration Tests (7/7 passed)
 python backend/test_database.py
 
-# 2. Prometheus Telemetry & Cardinality Tests
+# 2. Prometheus Telemetry & Cardinality Tests (6/6 passed)
 python backend/test_metrics.py
 
-# 3. Deterministic Mock Agent Evaluation Benchmark (100% offline)
+# 3. Deterministic Mock Agent Evaluation Benchmark (4/4 passed, 100% offline)
 python backend/evaluation_suite.py --mode=mock
 
 # 4. Frontend Production Build Check
@@ -279,22 +339,23 @@ The automated workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 
 ---
 
-## 9. Security & Current Limitations
+## 10. Security & Current Limitations
 
 ### Security Safeguards
 - **Origin Guard**: Navigation is restricted to approved testing domains (`https://www.saucedemo.com`). Attempts to navigate to unauthorized internal or external domains are rejected.
 - **Approved Tool Registry**: The agent loop is constrained to an explicit set of actions (`navigate`, `fill`, `click`, `press_key`, `assert_url`, `assert_text_visible`, `assert_element_visible`, `stop`). Arbitrary JavaScript execution is prohibited.
-- **Credential Quarantine**: Personal API keys and `.env` files are excluded from Git and Docker build contexts via `.gitignore` and `.dockerignore`.
+- **Credential Quarantine**: Personal API keys, passwords, and `.env` files are excluded from Git and Docker build contexts via `.gitignore` and `.dockerignore`.
 - **Human-in-the-Loop Approval**: Generated test plans must be explicitly accepted by the user before execution.
+- **Deterministic DOM Assertions**: Pass/fail outcomes are evaluated strictly through actual Playwright DOM assertions (`page.url`, `page.text_content`, `page.locator`), never by LLM self-reporting.
 
 ### Current Limitations
 - **Workflow Scope**: The autonomous agent loop is currently optimized and bounded for the SauceDemo e-commerce application. It does not generalize to arbitrary, unmapped multi-page web applications.
-- **Max Iterations**: The agent loop enforces a strict bound of 12 iterations to prevent infinite execution loops on unresponsive pages.
+- **Max Iterations**: The agent loop enforces a strict bound of `MAX_AGENT_ITERATIONS = 8` to prevent infinite execution loops on unresponsive pages.
 - **Single-Page Application State**: Highly dynamic canvas elements, WebSocket-heavy interfaces, and multi-tab workflows are not currently supported.
 
 ---
 
-## 10. Roadmap
+## 11. Roadmap
 
 - [ ] **Multi-Domain Configuration**: Extensible domain registry enabling users to configure approved URL allowlists and custom element aliases via YAML.
 - [ ] **Visual Regression Comparison**: Perceptual pixel-diffing against baseline screenshots to detect unexpected layout regressions.
@@ -303,6 +364,6 @@ The automated workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 
 ---
 
-## 11. License
+## 12. License
 
 This repository does not currently include an open-source license. All rights are reserved by the repository owner. Contact the author for permissions regarding usage or distribution.

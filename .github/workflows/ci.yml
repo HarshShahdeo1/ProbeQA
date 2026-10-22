@@ -76,6 +76,8 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Validate Docker Compose Configuration
+        env:
+          GF_SECURITY_ADMIN_PASSWORD: ci_validation_placeholder_not_a_real_secret
         run: docker compose config
 
       - name: Build Backend Docker Image
